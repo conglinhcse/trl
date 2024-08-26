@@ -1,0 +1,13 @@
+CUDA_VISIBLE_DEVICES=0 python ctg/model/rl/ppo/ppo.py \
+    --learning_rate 3e-6 \
+    --output_dir ctg/ckpts/rl/rl_minimal_ppo \
+    --num_ppo_epochs 1 \
+    --num_mini_batches 1 \
+    --learning_rate 3e-6 \
+    --per_device_train_batch_size 8 \
+    --gradient_accumulation_steps 1 \
+    --total_episodes 10000 \
+    --model_name_or_path gpt2 \
+    --reward_model_path ctg/ckpts/rm/reward_modeling_anthropic_hh/checkpoint-790 \
+    --sft_model_path ctg/ckpts/sft/sft_openassistant-guanaco/checkpoint-114 \
+    --non_eos_penalty \

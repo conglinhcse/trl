@@ -1,8 +1,14 @@
+import sys
+sys.path.append("")
+
+CUDA_LAUNCH_BLOCKING = '1'
+
 import warnings
 
 import torch
 from accelerate import PartialState
 from datasets import load_dataset
+import datasets
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, HfArgumentParser
 
@@ -34,9 +40,11 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(
         model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True
     )
+    tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForSequenceClassification.from_pretrained(
         model_config.model_name_or_path, num_labels=1, trust_remote_code=model_config.trust_remote_code, **model_kwargs
     )
+    model.config.pad_token_id = tokenizer(tokenizer.pad_token)["input_ids"][0]
 
     if model_config.lora_task_type != "SEQ_CLS":
         warnings.warn(
@@ -47,12 +55,14 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
-    raw_datasets = load_dataset("Anthropic/hh-rlhf")
+
+    train_dataset = load_dataset("Anthropic/hh-rlhf", split=[
+        datasets.ReadInstruction('train', to=10, unit='%')])[0]
+    eval_dataset = load_dataset("Anthropic/hh-rlhf", split=[
+        datasets.ReadInstruction('test', to=10, unit='%')])[0]
+
     # Tokenize chosen/rejected pairs of inputs
     # Adapt this section to your needs for custom datasets
-
-    import pdb
-    pdb.set_trace()
 
     def preprocess_function(examples):
         new_examples = {
@@ -76,20 +86,28 @@ if __name__ == "__main__":
     # Compute that only on the main process for faster data processing.
     # see: https://github.com/huggingface/trl/pull/1255
     with PartialState().local_main_process_first():
-        raw_datasets = raw_datasets.map(
+        train_dataset = train_dataset.map(
             preprocess_function,
             batched=True,
             num_proc=config.dataset_num_proc,
         )
-        raw_datasets = raw_datasets.filter(
+        train_dataset = train_dataset.filter(
+            lambda x: len(x["input_ids_chosen"]) <= config.max_length
+            and len(x["input_ids_rejected"]) <= config.max_length,
+            num_proc=config.dataset_num_proc,
+        )
+        eval_dataset = eval_dataset.map(
+            preprocess_function,
+            batched=True,
+            num_proc=config.dataset_num_proc,
+        )
+        eval_dataset = eval_dataset.filter(
             lambda x: len(x["input_ids_chosen"]) <= config.max_length
             and len(x["input_ids_rejected"]) <= config.max_length,
             num_proc=config.dataset_num_proc,
         )
 
-    train_dataset = raw_datasets["train"]
-    eval_dataset = raw_datasets["test"]
-
+    
     ################
     # Training
     ################
