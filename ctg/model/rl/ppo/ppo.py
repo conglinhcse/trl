@@ -2,6 +2,9 @@ import sys
 sys.path.append("")
 
 import shutil
+import os
+import json
+import random
 
 from accelerate import PartialState
 from datasets import load_dataset
@@ -11,10 +14,24 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
 )
+from datasets import Dataset
 
 from trl import ModelConfig
 from trl.trainer.ppov2_trainer import PPOv2Config, PPOv2Trainer
-from trl.trainer.utils import SIMPLE_QUERY_CHAT_TEMPLATE
+
+def prep_data(data_list):
+    ls_instructions, ls_leading_contexts = [], []
+    for entry in data_list:
+        ls_leading_contexts.append(entry["leading_context"])
+        local_keywords = entry["local_keywords"]
+        if len(local_keywords) >= 2:
+            local_keywords = random.sample(local_keywords, 2)
+        ls_instructions.append("Given a leading context of a story, write one single next sentence containing the following keywords: " + ", ".join(local_keywords) + ".")
+
+    return Dataset.from_dict({
+        "instruction": ls_instructions,
+        "leading_context": ls_leading_contexts
+    })
 
 
 if __name__ == "__main__":
@@ -23,60 +40,66 @@ if __name__ == "__main__":
     # remove output_dir if exists
     shutil.rmtree(config.output_dir, ignore_errors=True)
 
-    ################
+    # ###############
     # Model & Tokenizer
-    ################
+    # ###############
     tokenizer = AutoTokenizer.from_pretrained(
         model_config.model_name_or_path,
-        padding_side="left",
-        trust_remote_code=model_config.trust_remote_code,
+        padding_side="left"
     )
     tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.chat_template is None:
-        tokenizer.chat_template = SIMPLE_QUERY_CHAT_TEMPLATE
     value_model = AutoModelForSequenceClassification.from_pretrained(
-        config.reward_model_path, trust_remote_code=model_config.trust_remote_code, num_labels=1
+        config.reward_model_path
     )
     reward_model = AutoModelForSequenceClassification.from_pretrained(
-        config.reward_model_path, trust_remote_code=model_config.trust_remote_code, num_labels=1
+        config.reward_model_path
     )
     ref_policy = AutoModelForCausalLM.from_pretrained(
-        config.sft_model_path, trust_remote_code=model_config.trust_remote_code
+        config.sft_model_path
     )
     policy = AutoModelForCausalLM.from_pretrained(
-        config.sft_model_path, trust_remote_code=model_config.trust_remote_code
+        config.sft_model_path
     )
+
     ################
     # Dataset
     ################
-    raw_datasets = load_dataset("trl-internal-testing/descriptiveness-sentiment-trl-style", split="descriptiveness")
-    eval_samples = 20
-    train_dataset = raw_datasets.select(range(len(raw_datasets) - eval_samples))
-    eval_dataset = raw_datasets.select(range(len(raw_datasets) - eval_samples, len(raw_datasets)))
-    dataset_text_field = "prompt"
-
-    def prepare_dataset(dataset, tokenizer):
-        """pre-tokenize the dataset before training; only collate during training"""
-
+    def formatting_prompts_func(dataset, tokenizer):
         def tokenize(element):
+            prompt = f"### Instruction: {element["instruction"]}\n ### Leading Context: {element["leading_context"]}\n ### Next Sentence: "
             outputs = tokenizer(
-                element[dataset_text_field],
+                prompt,
                 padding=False,
             )
             return {"input_ids": outputs["input_ids"]}
-
+        
         return dataset.map(
             tokenize,
-            batched=True,
+            batched=False,
             remove_columns=dataset.column_names,
             num_proc=config.dataset_num_proc,
         )
+    
+    # data_path = "/home/leycy016/conglinhle/resource/data/rocstories-data/sft"
+    train_data, eval_data = [], []
+    with open(os.path.join("/home/leycy016/conglinhle/resource/data/rocstories-data/rl", "train.json"), "r", encoding="utf8") as fp:
+        train_data = json.load(fp)
+    with open(os.path.join("/home/leycy016/conglinhle/resource/data/rocstories-data/sft", "val.json"), "r", encoding="utf8") as fp:
+        eval_data = json.load(fp)
+
+    random.shuffle(train_data) 
+    random.shuffle(eval_data)
+
+    train_dataset = prep_data(data_list=train_data)
+    eval_dataset = prep_data(data_list=eval_data)
 
     # Compute that only on the main process for faster data processing.
     # see: https://github.com/huggingface/trl/pull/1255
     with PartialState().local_main_process_first():
-        train_dataset = prepare_dataset(train_dataset, tokenizer)
-        eval_dataset = prepare_dataset(eval_dataset, tokenizer)
+        train_dataset = formatting_prompts_func(train_dataset, tokenizer)
+        eval_dataset = formatting_prompts_func(eval_dataset, tokenizer)
+
+    print(f'There are {len(train_dataset) :,} and {len(eval_dataset) :,} samples for training, validation.')
 
     ################
     # Training

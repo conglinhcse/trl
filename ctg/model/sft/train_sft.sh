@@ -1,14 +1,20 @@
 CUDA_VISIBLE_DEVICES=0 python ctg/model/sft/sft.py \
-    --model_name_or_path gpt2 \
-    --dataset_text_field text \
+    --model_name_or_path gpt2-medium \
+    --output_dir ctg/ckpts/sft/sft_gpt2-med_06092024____ \
     --report_to wandb \
-    --learning_rate 1.41e-5 \
+    --learning_rate 5.0e-5 \
+    --adam_epsilon 1e-08 \
     --max_seq_length 256 \
-    --per_device_train_batch_size 16 \
-    --gradient_accumulation_steps 16 \
-    --output_dir ctg/ckpts/sft/sft_openassistant-guanaco \
-    --logging_steps 1 \
-    --num_train_epochs 3 \
-    --max_steps -1 \
-    --gradient_checkpointing
-
+    --num_train_epochs 2\
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 64 \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --save_steps 100 \
+    --save_total_limit 1 \
+    --load_best_model_at_end True \
+    --logging_steps 100 \
+    --gradient_checkpointing \
+    --warmup_ratio 0.1 \
+    --bf16 \
+    --packing False \

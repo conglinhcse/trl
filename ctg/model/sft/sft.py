@@ -4,9 +4,12 @@ sys.path.append("")
 import logging
 import os
 from contextlib import nullcontext
+import json
+import random
 
 from trl.commands.cli_utils import init_zero_verbose, SFTScriptArguments, TrlParser
 from trl.env_utils import strtobool
+from datasets import Dataset
 
 TRL_USE_RICH = strtobool(os.getenv("TRL_USE_RICH", "0"))
 
@@ -31,12 +34,43 @@ from trl import (
     get_peft_config,
     get_quantization_config,
     get_kbit_device_map,
+    DataCollatorForCompletionOnlyLM
 )
 
 tqdm.pandas()
 
 if TRL_USE_RICH:
     logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler()], level=logging.INFO)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def prep_data(data_list):
+    ls_instructions, ls_leading_contexts, ls_expected_sentences = [], [], []
+    for entry in data_list:
+        ls_leading_contexts.append(entry["leading_context"])
+        ls_expected_sentences.append(entry["expected_sentence"])
+        local_keywords = entry["local_keywords"]
+        if len(local_keywords) >= 2:
+            local_keywords = random.sample(local_keywords, 2)
+        ls_instructions.append("Given a leading context of a story, write one single next sentence containing the following keywords: " + ", ".join(local_keywords) + ".")
+
+    return Dataset.from_dict({
+        "instruction": ls_instructions,
+        "leading_context": ls_leading_contexts,
+        "expected_sentence": ls_expected_sentences
+    })
+
+
+def formatting_prompts_func(examples):
+    output_texts = []
+    for i in range(len(examples["instruction"])):
+        instruction = examples["instruction"][i]
+        leading_context = examples["leading_context"][i]
+        expected_sentence = examples["expected_sentence"][i]
+        text = f"### Instruction: {instruction}\n ### Leading Context: {leading_context}\n ### Next Sentence: {expected_sentence}{tokenizer.eos_token}"
+        output_texts.append(text)
+
+    return output_texts
 
 
 if __name__ == "__main__":
@@ -60,6 +94,7 @@ if __name__ == "__main__":
         use_cache=False if training_args.gradient_checkpointing else True,
         device_map=get_kbit_device_map() if quantization_config is not None else None,
         quantization_config=quantization_config,
+        force_download=True,
     )
     training_args.model_init_kwargs = model_kwargs
     tokenizer = AutoTokenizer.from_pretrained(
@@ -70,10 +105,23 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
-    raw_datasets = load_dataset(args.dataset_name)
+    data_path = "/home/leycy016/conglinhle/resource/data/rocstories-data/sft"
+    train_data, eval_data = [], []
+    with open(os.path.join(data_path, "train.json"), "r", encoding="utf8") as fp:
+        train_data = json.load(fp)
+    with open(os.path.join(data_path, "val.json"), "r", encoding="utf8") as fp:
+        eval_data = json.load(fp)
 
-    train_dataset = raw_datasets[args.dataset_train_split]
-    eval_dataset = raw_datasets[args.dataset_test_split]
+    random.shuffle(train_data) 
+    random.shuffle(eval_data)
+
+    train_dataset = prep_data(data_list=train_data)
+    eval_dataset = prep_data(data_list=eval_data)
+
+    print(f'There are {len(train_dataset) :,} and {len(eval_dataset) :,} samples for training, validation.')
+
+    response_template = " ### Next Sentence:"
+    collator = DataCollatorForCompletionOnlyLM(response_template, tokenizer=tokenizer)
 
     ################
     # Optional rich context managers
@@ -95,6 +143,8 @@ if __name__ == "__main__":
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             tokenizer=tokenizer,
+            formatting_func=formatting_prompts_func,
+            data_collator=collator,
             peft_config=get_peft_config(model_config),
             callbacks=[RichProgressCallback] if TRL_USE_RICH else None,
         )

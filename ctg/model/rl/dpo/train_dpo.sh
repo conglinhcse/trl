@@ -1,0 +1,28 @@
+CUDA_VISIBLE_DEVICES=0 python ctg/model/rl/dpo/dpo.py \
+    --model_name_or_path ctg/ckpts/sft/sft_gpt2_03092024/checkpoint-5400 \
+    --output_dir ctg/ckpts/rl/dpo_beta0.01_lr5.-6 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 32 \
+    --gradient_accumulation_steps 4 \
+    --do_eval \
+    --max_length 256 \
+    --max_prompt_length 224 \
+    --max_target_length 32 \
+    --num_train_epochs 2 \
+    --beta 0.01 \
+    --learning_rate 5.0e-6 \
+    --gradient_checkpointing \
+    --lr_scheduler_type cosine \
+    --logging_steps 50 \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --save_steps 50 \
+    --eval_steps 50 \
+    --warmup_ratio 0.1 \
+    --report_to wandb \
+    --bf16 \
+    --logging_first_step \
+    --no_remove_unused_columns \
+    --save_total_limit 1 \
+    --load_best_model_at_end True \
+    --seed 2024 \

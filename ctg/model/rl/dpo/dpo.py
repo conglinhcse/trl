@@ -1,59 +1,13 @@
-# flake8: noqa
-# Copyright 2023 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-# regular:
-python examples/scripts/dpo.py \
-    --dataset_name=trl-internal-testing/hh-rlhf-helpful-base-trl-style \
-    --model_name_or_path=gpt2 \
-    --per_device_train_batch_size 4 \
-    --learning_rate 1e-3 \
-    --gradient_accumulation_steps 1 \
-    --logging_steps 10 \
-    --eval_steps 500 \
-    --output_dir="dpo_anthropic_hh" \
-    --warmup_steps 150 \
-    --report_to wandb \
-    --bf16 \
-    --logging_first_step \
-    --no_remove_unused_columns
-
-# peft:
-python examples/scripts/dpo.py \
-    --dataset_name=trl-internal-testing/hh-rlhf-helpful-base-trl-style \
-    --model_name_or_path=gpt2 \
-    --per_device_train_batch_size 4 \
-    --learning_rate 1e-3 \
-    --gradient_accumulation_steps 1 \
-    --logging_steps 10 \
-    --eval_steps 500 \
-    --output_dir="dpo_anthropic_hh" \
-    --optim rmsprop \
-    --warmup_steps 150 \
-    --report_to wandb \
-    --bf16 \
-    --logging_first_step \
-    --no_remove_unused_columns \
-    --use_peft \
-    --lora_r=16 \
-    --lora_alpha=16
-"""
+import sys
+sys.path.append("")
 
 import logging
 import multiprocessing
 import os
+import json
+import random
 from contextlib import nullcontext
+from tqdm import tqdm
 
 from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose, TrlParser
 from trl.env_utils import strtobool
@@ -85,6 +39,21 @@ from trl import (
 if TRL_USE_RICH:
     logging.basicConfig(format=FORMAT, datefmt="[%X]", handlers=[RichHandler()], level=logging.INFO)
 
+def preprocess_pairwise(data_points):
+    data_samples = {
+        "prompt": [],
+        "chosen": [],
+        "rejected": [],
+    }
+    for sample in tqdm(data_points):
+        prompt = sample["prompt"]
+        chosen_sent = sample["chosen"].strip()
+        ls_rejected = [sample["rejected"]] if type(sample["rejected"]) == str else sample["rejected"]
+        for i in range(len(ls_rejected)):
+            data_samples["prompt"].append(prompt)
+            data_samples["chosen"].append(chosen_sent)
+            data_samples["rejected"].append(ls_rejected[i])
+    return data_samples
 
 if __name__ == "__main__":
     parser = TrlParser((DPOScriptArguments, DPOConfig, ModelConfig))
@@ -127,13 +96,7 @@ if __name__ == "__main__":
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.chat_template is None:
-        tokenizer.chat_template = "{% for message in messages %}{{message['role'] + ': ' + message['content'] + '\n\n'}}{% endfor %}{{ eos_token }}"
-    if args.ignore_bias_buffers:
-        # torch distributed hack
-        model._ddp_params_and_buffers_to_ignore = [
-            name for name, buffer in model.named_buffers() if buffer.dtype == torch.bool
-        ]
+    tokenizer.padding_side = "left"
 
     ################
     # Optional rich context managers
@@ -148,24 +111,22 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
-    ds = load_dataset(args.dataset_name)
-    if args.sanity_check:
-        for key in ds:
-            ds[key] = ds[key].select(range(50))
+    # data_path = "/home/leycy016/conglinhle/resource/data/rocstories-data/rm"
+    data_path = "ctg/data/ranking_data"
+    train_data, eval_data = [], []
+    with open(os.path.join(data_path, "train.json"), "r", encoding="utf8") as fp:
+        train_data = json.load(fp)
+    with open(os.path.join(data_path, "train_extra.json"), "r", encoding="utf8") as fp:
+        train_data.extend(json.load(fp))
+    with open(os.path.join(data_path, "val.json"), "r", encoding="utf8") as fp:
+        eval_data = json.load(fp)
 
-    def process(row):
-        row["prompt"] = tokenizer.apply_chat_template(row["chosen"][:-1], tokenize=False)
-        row["chosen"] = tokenizer.apply_chat_template([row["chosen"][-1]], tokenize=False)
-        row["rejected"] = tokenizer.apply_chat_template([row["rejected"][-1]], tokenize=False)
-        return row
+    train_dataset = preprocess_pairwise(data_points=train_data)
+    eval_dataset = preprocess_pairwise(data_points=eval_data)
 
-    # Compute that only on the main process for faster data processing.
-    # see: https://github.com/huggingface/trl/pull/1255
-    with PartialState().local_main_process_first():
-        ds = ds.map(process, num_proc=training_args.dataset_num_proc)
-
-    train_dataset = ds[args.dataset_train_split]
-    eval_dataset = ds[args.dataset_test_split]
+    from datasets import Dataset
+    train_dataset = Dataset.from_dict({"prompt": train_dataset["prompt"], "chosen": train_dataset["chosen"], "rejected": train_dataset["rejected"]})
+    eval_dataset = Dataset.from_dict({"prompt": eval_dataset["prompt"], "chosen": eval_dataset["chosen"], "rejected": eval_dataset["rejected"]})
 
     ################
     # Training

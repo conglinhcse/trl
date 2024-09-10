@@ -4,6 +4,9 @@ sys.path.append("")
 CUDA_LAUNCH_BLOCKING = '1'
 
 import warnings
+import os
+import json
+import random
 
 import torch
 from accelerate import PartialState
@@ -11,11 +14,28 @@ from datasets import load_dataset
 import datasets
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, HfArgumentParser
+from datasets import Dataset
 
 from trl import ModelConfig, RewardConfig, RewardTrainer, get_kbit_device_map, get_peft_config, get_quantization_config
 
 
 tqdm.pandas()
+
+def create_comparison_dataset(data_list, eos_token):
+
+    ls_chosen, ls_rejected = [], []
+    for entry in data_list:
+        prompt = entry["prompt"]
+        chosen = entry["chosen"]
+        rejected = [entry["rejected"]] if type(entry["rejected"]) is str else entry["rejected"]
+        for res in rejected:
+            ls_chosen.append(f"{prompt}{chosen}{eos_token}".strip())
+            ls_rejected.append(f"{prompt}{res}{eos_token}".strip())
+
+    return Dataset.from_dict({
+        "chosen": ls_chosen,
+        "rejected": ls_rejected
+    })
 
 
 if __name__ == "__main__":
@@ -55,15 +75,24 @@ if __name__ == "__main__":
     ################
     # Dataset
     ################
+    
+    data_path = "ctg/data/ranking_data"
+    train_data, eval_data = [], []
+    with open(os.path.join(data_path, "train.json"), "r", encoding="utf8") as fp:
+        train_data = json.load(fp)
+    with open(os.path.join(data_path, "val.json"), "r", encoding="utf8") as fp:
+        eval_data = json.load(fp)
+    with open(os.path.join(data_path, "train_extra.json"), "r", encoding="utf8") as fp:
+        train_data.extend(json.load(fp))
 
-    train_dataset = load_dataset("Anthropic/hh-rlhf", split=[
-        datasets.ReadInstruction('train', to=10, unit='%')])[0]
-    eval_dataset = load_dataset("Anthropic/hh-rlhf", split=[
-        datasets.ReadInstruction('test', to=10, unit='%')])[0]
+    random.shuffle(train_data)
+    random.shuffle(eval_data)
+
+    train_dataset = create_comparison_dataset(train_data, tokenizer.eos_token)
+    eval_dataset = create_comparison_dataset(eval_data, tokenizer.eos_token)
 
     # Tokenize chosen/rejected pairs of inputs
     # Adapt this section to your needs for custom datasets
-
     def preprocess_function(examples):
         new_examples = {
             "input_ids_chosen": [],
@@ -91,19 +120,9 @@ if __name__ == "__main__":
             batched=True,
             num_proc=config.dataset_num_proc,
         )
-        train_dataset = train_dataset.filter(
-            lambda x: len(x["input_ids_chosen"]) <= config.max_length
-            and len(x["input_ids_rejected"]) <= config.max_length,
-            num_proc=config.dataset_num_proc,
-        )
         eval_dataset = eval_dataset.map(
             preprocess_function,
             batched=True,
-            num_proc=config.dataset_num_proc,
-        )
-        eval_dataset = eval_dataset.filter(
-            lambda x: len(x["input_ids_chosen"]) <= config.max_length
-            and len(x["input_ids_rejected"]) <= config.max_length,
             num_proc=config.dataset_num_proc,
         )
 

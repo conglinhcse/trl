@@ -1,15 +1,21 @@
 CUDA_VISIBLE_DEVICES=0 python ctg/model/rm/reward_modeling.py \
-    --model_name_or_path gpt2 \
-    --output_dir ctg/ckpts/rm/reward_modeling_anthropic_hh \
-    --per_device_train_batch_size 8 \
-    --num_train_epochs 1 \
+    --model_name_or_path ctg/ckpts/sft/sft_gpt2-med_06092024/checkpoint-5600 \
+    --output_dir ctg/ckpts/rm/rm_gpt2-med_06092024____ \
+    --per_device_train_batch_size 256 \
+    --per_device_eval_batch_size 256 \
     --gradient_accumulation_steps 2 \
+    --num_train_epochs 2 \
     --gradient_checkpointing True \
     --learning_rate 1.41e-5 \
     --report_to wandb \
     --remove_unused_columns False \
     --optim adamw_torch \
-    --logging_steps 10 \
+    --logging_steps 50 \
     --eval_strategy steps \
-    --eval_steps 500 \
+    --save_strategy steps \
+    --save_steps 50 \
+    --eval_steps 50 \
     --max_length 256 \
+    --warmup_ratio 0.1 \
+    --save_total_limit 1 \
+    --load_best_model_at_end True \
