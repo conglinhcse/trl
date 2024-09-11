@@ -1,21 +1,24 @@
-CUDA_VISIBLE_DEVICES=0 python ctg/model/rl/ppo/ppo.py \
+CUDA_VISIBLE_DEVICES=0 python ctg/model/rl/rloo/rloo.py \
     --model_name_or_path ctg/ckpts/sft/sft_gpt2-med_06092024/checkpoint-5600 \
     --sft_model_path ctg/ckpts/sft/sft_gpt2-med_06092024/checkpoint-5600 \
     --reward_model_path ctg/ckpts/rm/rm_gpt2-med_06092024/checkpoint-450 \
-    --output_dir ctg/ckpts/rl/rl_ppo/rl_ppo_gpt2-med_10092024 \
-    --exp_name ctg/ckpts/rl/rl_ppo/rl_ppo_gpt2-med_10092024 \
+    --output_dir ctg/ckpts/rl/rl_rloo/rloo_gpt2-med_10092024 \
+    --exp_name ctg/ckpts/rl/rl_rloo/rloo_gpt2-med_10092024 \
+    --num_ppo_epochs 2 \
+    --num_mini_batches 2 \
     --learning_rate 3.0e-6 \
     --per_device_train_batch_size 8 \
-    --gradient_accumulation_steps 4 \
-    --total_episodes 100000 \
+    --gradient_accumulation_steps 8 \
+    --total_episodes 10000 \
     --non_eos_penalty \
     --stop_token eos \
     --response_length 32 \
     --local_rollout_forward_batch_size 8 \
+    --kl_coef 0.03 \
     --save_total_limit 1 \
     --load_best_model_at_end False \
     --eval_strategy steps \
     --save_strategy steps \
-    --eval_steps 100 \
-    --save_steps 100 \
+    --eval_steps 50 \
+    --save_steps 50 \
     --seed 2024 \

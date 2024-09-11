@@ -1,8 +1,6 @@
-import sys
+import sys, os
 sys.path.append("")
-
 import shutil
-import os
 import json
 import random
 
@@ -17,7 +15,8 @@ from transformers import (
 from datasets import Dataset
 
 from trl import ModelConfig
-from trl.trainer.ppov2_trainer import PPOv2Config, PPOv2Trainer
+from trl.trainer.rloo_trainer import RLOOConfig, RLOOTrainer
+from trl.trainer.utils import SIMPLE_QUERY_CHAT_TEMPLATE
 
 def prep_data(data_list):
     ls_instructions, ls_leading_contexts = [], []
@@ -35,22 +34,19 @@ def prep_data(data_list):
 
 
 if __name__ == "__main__":
-    parser = HfArgumentParser((PPOv2Config, ModelConfig))
+    parser = HfArgumentParser((RLOOConfig, ModelConfig))
     config, model_config = parser.parse_args_into_dataclasses()
     # remove output_dir if exists
     shutil.rmtree(config.output_dir, ignore_errors=True)
 
-    # ###############
+    ################
     # Model & Tokenizer
-    # ###############
+    ################
     tokenizer = AutoTokenizer.from_pretrained(
         model_config.model_name_or_path,
         padding_side="left"
     )
     tokenizer.pad_token = tokenizer.eos_token
-    value_model = AutoModelForSequenceClassification.from_pretrained(
-        config.reward_model_path
-    )
     reward_model = AutoModelForSequenceClassification.from_pretrained(
         config.reward_model_path
     )
@@ -60,7 +56,6 @@ if __name__ == "__main__":
     policy = AutoModelForCausalLM.from_pretrained(
         config.sft_model_path
     )
-
     ################
     # Dataset
     ################
@@ -104,13 +99,12 @@ if __name__ == "__main__":
     ################
     # Training
     ################
-    trainer = PPOv2Trainer(
+    trainer = RLOOTrainer(
         config=config,
         tokenizer=tokenizer,
         policy=policy,
         ref_policy=ref_policy,
         reward_model=reward_model,
-        value_model=value_model,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
     )

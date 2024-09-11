@@ -1,0 +1,24 @@
+CUDA_VISIBLE_DEVICES=0 python ctg/model/sft/sft.py \
+    --model_name_or_path gpt2-xl \
+    --output_dir ctg/ckpts/sft/sft_gpt2-xl_11092024 \
+    --report_to wandb \
+    --learning_rate 1.41e-5 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 64 \
+    --gradient_accumulation_steps 8 \
+    --max_seq_length 256 \
+    --num_train_epochs 2 \
+    --max_steps -1 \
+    --warmup_ratio 0.1 \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --save_steps 25 \
+    --logging_steps 25 \
+    --save_total_limit 1 \
+    --load_best_model_at_end True \
+    --gradient_checkpointing \
+    --use_peft \
+    --lora_r 16 \
+    --lora_alpha 8 \
+    --bf16 \
+    --packing False \

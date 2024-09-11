@@ -1,5 +1,6 @@
 import os
 import json
+from tqdm import tqdm
 
 from transformers import (
     AutoModelForCausalLM,
@@ -95,10 +96,13 @@ def create_comparison_dataset(data_list, eos_token):
 
     return ls_chosen, ls_rejected, ls_context
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 if __name__=="__main__":
     reward_model_path = "ctg/ckpts/rm/rm_gpt2-med_06092024/checkpoint-450"
     reward_model = AutoModelForSequenceClassification.from_pretrained(reward_model_path)
+    reward_model.eval()
+    _ = reward_model.to(device)
     tokenizer = AutoTokenizer.from_pretrained(reward_model_path)
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -109,19 +113,38 @@ if __name__=="__main__":
     data_path = "ctg/data/ranking_data"
     eval_data = []
     with open(os.path.join(data_path, "val.json"), "r", encoding="utf8") as fp:
-        eval_data = json.load(fp)
+        eval_data = json.load(fp)[:50]
     ls_chosen, ls_rejected, ls_context = create_comparison_dataset(eval_data, tokenizer.eos_token)
     print(f'There are {len(ls_chosen) :,} samples for validation.')
 
     rw_scores = []
-    for idx in range(len(ls_chosen)):
-        query_responses_ids = tokenizer([ls_chosen[idx], ls_rejected[idx]], max_length=256, padding=True, return_tensors="pt").input_ids
+    for idx in tqdm(range(len(ls_chosen))):
+        query_responses_ids = tokenizer([ls_chosen[idx], ls_rejected[idx]], max_length=256, padding=True, return_tensors="pt").input_ids.to(device)
         context_length = len(tokenizer(ls_context[idx]).input_ids)
-        _, rw_score, _ = get_reward(reward_model, query_responses_ids, tokenizer.pad_token_id, context_length)
+
+        attention_mask = query_responses_ids != tokenizer.pad_token_id
+        position_ids = attention_mask.cumsum(1) - attention_mask.long()
+        lm_backbone = getattr(reward_model, reward_model.base_model_prefix)
+        input_ids = torch.masked_fill(query_responses_ids, ~attention_mask, 0)
+        output = lm_backbone(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            return_dict=True,
+            output_hidden_states=True,
+            use_cache=False,
+        )
+        reward_logits = reward_model.score(output.hidden_states[-1])
+        sequence_lengths = first_true_indices(query_responses_ids[:, context_length:] == tokenizer.pad_token_id) - 1 + context_length
+
+        rw_score = reward_logits[
+                torch.arange(reward_logits.size(0), device=reward_logits.device),
+                sequence_lengths,
+            ].squeeze(-1)
         rw_scores.append(rw_score.reshape(1,2))
     rw_scores = torch.cat(rw_scores)
-    acc = (rw_scores[:,0] > rw_scores[:,1]).sum()
-    print("Total accuracy: ", acc)
+    acc = (rw_scores[:,0] > rw_scores[:,1]).sum() / len(ls_chosen)
+    print("Total accuracy: ", round(acc.item(), 4))
 
 
     
