@@ -135,6 +135,13 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
             for i in range(len(examples)):
                 response_token_ids_start_idx = None
 
+                ## Add <|endoftext|> to the end of the expected sentence
+                for idx in np.where(batch["labels"][i] == self.ignore_index)[0]:
+                    if idx == 0: continue
+                    else: 
+                        batch["labels"][i][idx] = self.tokenizer.eos_token_id
+                        break
+
                 for idx in np.where(batch["labels"][i] == self.response_token_ids[0])[0]:
                     # `response_token_ids` is `'### Response:\n'`, here we are just making sure that the token IDs match
                     if (
