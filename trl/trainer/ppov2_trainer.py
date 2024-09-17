@@ -83,6 +83,7 @@ class PPOv2Trainer(Trainer):
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         callbacks: Optional[List[TrainerCallback]] = None,
     ) -> None:
+        self.global_rlhf_reward = -9999999.0
         self.args = config
         args = config
         self.tokenizer = tokenizer
@@ -526,8 +527,10 @@ class PPOv2Trainer(Trainer):
             self.lr_scheduler.step()
             self.control = self.callback_handler.on_step_end(args, self.state, self.control)
             if self.control.should_save:
-                self._save_checkpoint(model, trial=None, metrics=metrics)
-                self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+                if metrics["objective/rlhf_reward"] > self.global_rlhf_reward:
+                    self._save_checkpoint(model, trial=None, metrics=metrics)
+                    self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+                    self.global_rlhf_reward = metrics["objective/rlhf_reward"]
             del kl, mean_kl, mean_entropy, mean_non_score_reward, scores, metrics, non_score_reward
             torch.cuda.empty_cache()
             gc.collect()
@@ -558,9 +561,9 @@ class PPOv2Trainer(Trainer):
 
         # HF trainer specifics
         self.control = self.callback_handler.on_train_end(args, self.state, self.control)
-        if self.control.should_save:
-            self._save_checkpoint(model, trial=None, metrics=None)
-            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+        # if self.control.should_save:
+        #     self._save_checkpoint(model, trial=None, metrics=None)
+        #     self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
     def generate_completions(self, sampling: bool = False):
         args = self.args
